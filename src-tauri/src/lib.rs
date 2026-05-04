@@ -2,7 +2,7 @@ use serde_json::Value;
 use tokio_postgres::NoTls;
 
 fn database_url() -> String {
-    std::env::var("DATABASE_URL")
+    std::env::var("JOJODB_DATABASE_URL")
         .unwrap_or_else(|_| "postgresql://localhost/your_database".to_string())
 }
 
@@ -63,6 +63,7 @@ async fn db_execute(sql: String) -> Result<u64, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    dotenvy::dotenv().ok(); // load .env if present, silently ignore if missing
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![db_query, db_execute])
