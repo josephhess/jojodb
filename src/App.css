@@ -247,6 +247,11 @@ tbody tr:hover {
   min-height: 340px;
 }
 
+.kanban-column.over {
+  border-color: var(--accent);
+  background: #f1faf8;
+}
+
 .kanban-header {
   display: flex;
   align-items: center;
@@ -272,6 +277,10 @@ tbody tr:hover {
   border: 1px solid var(--panel-border);
   box-shadow: 0 6px 14px rgba(23, 18, 7, 0.08);
   cursor: pointer;
+}
+
+.card.dragging {
+  cursor: grabbing;
 }
 
 .card-title {

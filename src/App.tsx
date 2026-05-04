@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { DndContext, type DragEndEvent, useDraggable, useDroppable } from "@dnd-kit/core";
 import { dbExecute, dbQuery } from "./lib/db";
 import { ENUMS, TABLES, type ColumnConfig, type TableKey } from "./lib/schema";
 import "./App.css";
@@ -91,6 +92,77 @@ function buildUpdateSql(table: TableKey, draft: Record<string, unknown>) {
     .map((column) => `${column.key} = ${sqlValue(draft[column.key], column)}`)
     .join(", ");
   return `update ${table} set ${sets} where id = ${Number(draft.id)};`;
+}
+
+type DragCardData = {
+  table: TableKey;
+  id: number;
+};
+
+function KanbanColumn({
+  table,
+  status,
+  onAdd,
+  children,
+}: {
+  table: TableKey;
+  status: string;
+  onAdd: () => void;
+  children: React.ReactNode;
+}) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `column:${table}:${status}`,
+    data: { status },
+  });
+
+  return (
+    <div ref={setNodeRef} className={`kanban-column${isOver ? " over" : ""}`}>
+      <div className="kanban-header">
+        <h3>{status}</h3>
+        <button className="ghost" onClick={onAdd}>
+          Add
+        </button>
+      </div>
+      <div className="kanban-cards">{children}</div>
+    </div>
+  );
+}
+
+function KanbanCard({
+  table,
+  id,
+  onOpen,
+  children,
+}: {
+  table: TableKey;
+  id: number;
+  onOpen: () => void;
+  children: React.ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: `card:${table}:${id}`,
+    data: { table, id } satisfies DragCardData,
+  });
+
+  const style = {
+    transform: transform
+      ? `translate3d(${transform.x}px, ${transform.y}px, 0)`
+      : undefined,
+    opacity: isDragging ? 0.55 : 1,
+  } as React.CSSProperties;
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`card${isDragging ? " dragging" : ""}`}
+      onClick={onOpen}
+      {...listeners}
+      {...attributes}
+    >
+      {children}
+    </div>
+  );
 }
 
 function App() {
@@ -208,15 +280,15 @@ function App() {
 
   function toggleFilter(table: TableKey, field: string, value: string) {
     setFilters((prev) => {
-      const next = { ...prev };
-      const set = new Set(next[table][field]);
+      const tableFilters = { ...prev[table] };
+      const set = new Set(tableFilters[field]);
       if (set.has(value)) {
         set.delete(value);
       } else {
         set.add(value);
       }
-      next[table][field] = set;
-      return next;
+      tableFilters[field] = set;
+      return { ...prev, [table]: tableFilters };
     });
   }
 
@@ -269,6 +341,15 @@ function App() {
     }
   }
 
+  function handleKanbanDragEnd(event: DragEndEvent) {
+    const activeData = event.active.data.current as DragCardData | undefined;
+    const status = event.over?.data.current?.status as string | undefined;
+    if (!activeData || !status) return;
+    if (activeData.table === activeTable) {
+      updateStatus(activeTable, activeData.id, status);
+    }
+  }
+
   return (
     <div className="app">
       <header className="top-bar">
@@ -311,7 +392,10 @@ function App() {
               <button
                 key={table}
                 className={activeTable === table ? "active" : ""}
-                onClick={() => setActiveTable(table)}
+                onClick={() => {
+                  setActiveTable(table);
+                  setSortState(null);
+                }}
               >
                 {TABLES[table].label}
               </button>
@@ -403,55 +487,25 @@ function App() {
         )}
 
         {activeView === "kanban" && (
-          <div className="kanban">
-            {ENUMS[activeConfig.filters[0].enumKey].map((status) => (
-              <div
-                key={status}
-                className="kanban-column"
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  const raw = event.dataTransfer.getData("text/plain");
-                  if (!raw) return;
-                  try {
-                    const payload = JSON.parse(raw) as {
-                      table: TableKey;
-                      id: number;
-                    };
-                    if (payload.table === activeTable) {
-                      updateStatus(activeTable, payload.id, status);
-                    }
-                  } catch {
-                    return;
+          <DndContext onDragEnd={handleKanbanDragEnd}>
+            <div className="kanban">
+              {ENUMS[activeConfig.filters[0].enumKey].map((status) => (
+                <KanbanColumn
+                  key={status}
+                  table={activeTable}
+                  status={status}
+                  onAdd={() =>
+                    startNewRow(activeTable, { [activeConfig.statusField]: status })
                   }
-                }}
-              >
-                <div className="kanban-header">
-                  <h3>{status}</h3>
-                  <button
-                    className="ghost"
-                    onClick={() =>
-                      startNewRow(activeTable, { [activeConfig.statusField]: status })
-                    }
-                  >
-                    Add
-                  </button>
-                </div>
-                <div className="kanban-cards">
+                >
                   {data[activeTable]
                     .filter((row) => row[activeConfig.statusField] === status)
                     .map((row) => (
-                      <div
+                      <KanbanCard
                         key={String(row.id)}
-                        className="card"
-                        draggable
-                        onDragStart={(event) =>
-                          event.dataTransfer.setData(
-                            "text/plain",
-                            JSON.stringify({ table: activeTable, id: row.id }),
-                          )
-                        }
-                        onClick={() =>
+                        table={activeTable}
+                        id={Number(row.id)}
+                        onOpen={() =>
                           setEditing({
                             table: activeTable,
                             row: row as Record<string, unknown>,
@@ -483,12 +537,12 @@ function App() {
                             <div className="card-meta">{String(row.next_action ?? "")}</div>
                           </>
                         )}
-                      </div>
+                      </KanbanCard>
                     ))}
-                </div>
-              </div>
-            ))}
-          </div>
+                </KanbanColumn>
+              ))}
+            </div>
+          </DndContext>
         )}
       </section>
 
