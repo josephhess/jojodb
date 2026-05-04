@@ -1,3 +1,4 @@
+use log::{error, info};
 use serde_json::Value;
 use tokio_postgres::NoTls;
 
@@ -55,16 +56,39 @@ async fn db_execute(sql: String) -> Result<u64, String> {
         }
     });
 
-    client
-        .execute(&sql, &[])
+    // simple_query uses the simple protocol (same as db_query) which gives
+    // full Postgres error messages and handles ENUMs correctly.
+    info!("db_execute: {sql}");
+    let messages = client
+        .simple_query(&sql)
         .await
-        .map_err(|err| err.to_string())
+        .map_err(|err| {
+            let msg = err.to_string();
+            error!("db_execute failed: {msg} | sql: {sql}");
+            msg
+        })?;
+
+    // Count affected rows from the CommandComplete message.
+    let affected = messages.iter().find_map(|msg| {
+        if let tokio_postgres::SimpleQueryMessage::CommandComplete(n) = msg {
+            Some(*n)
+        } else {
+            None
+        }
+    }).unwrap_or(0);
+
+    Ok(affected)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     dotenvy::dotenv().ok(); // load .env if present, silently ignore if missing
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(log::LevelFilter::Info)
+                .build(),
+        )
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![db_query, db_execute])
         .run(tauri::generate_context!())

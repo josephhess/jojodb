@@ -220,6 +220,21 @@ th {
   user-select: none;
 }
 
+.drag-handle {
+  margin-left: 8px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--panel-border);
+  background: #f3f0eb;
+  font-size: 0.75rem;
+  color: var(--muted);
+  cursor: grab;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
 tbody tr:hover {
   background: #fbf8f3;
 }
@@ -336,6 +351,11 @@ tbody tr:hover {
   color: var(--muted);
 }
 
+.required {
+  color: #c1442e;
+  font-weight: 700;
+}
+
 .field input,
 .field select {
   padding: 10px 12px;
@@ -351,11 +371,26 @@ tbody tr:hover {
   color: #8e877d;
 }
 
+.field-hint {
+  font-size: 0.75rem;
+  color: #8e877d;
+}
+
 .modal-actions {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
   margin-top: 16px;
+}
+
+.field-warning {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fff1d6;
+  border: 1px solid #f0c36a;
+  color: #8a5d0a;
+  font-size: 0.85rem;
 }
 
 @media (max-width: 720px) {

@@ -1,5 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
-import { DndContext, type DragEndEvent, useDraggable, useDroppable } from "@dnd-kit/core";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  DndContext,
+  type DragEndEvent,
+  PointerSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import { SortableContext, arrayMove, useSortable } from "@dnd-kit/sortable";
 import { dbExecute, dbQuery } from "./lib/db";
 import { ENUMS, TABLES, type ColumnConfig, type TableKey } from "./lib/schema";
 import "./App.css";
@@ -12,19 +21,15 @@ type EditState = {
   isNew: boolean;
 };
 
-const TABLE_KEYS: TableKey[] = [
-  "gig_platforms",
-  "job_applications",
-  "contracting_platforms",
-];
+const TABLE_KEYS = Object.keys(TABLES) as TableKey[];
 
-const INT_COLUMNS = new Set([
-  "id",
-  "platform_id",
-  "connects_spent",
-  "connects_balance",
-  "connects_per_proposal",
-]);
+const INT_COLUMNS = new Set(
+  TABLE_KEYS.flatMap((table) =>
+    TABLES[table].columns
+      .filter((column) => column.type === "int" || column.type === "fk")
+      .map((column) => column.key),
+  ),
+);
 
 function loadColumnOrder(table: TableKey): string[] {
   const stored = localStorage.getItem(`pipeline-ui:columnOrder:${table}`);
@@ -65,7 +70,7 @@ function sqlValue(value: unknown, column: ColumnConfig): string {
   if (value === null || value === undefined || value === "") {
     return "NULL";
   }
-  if (column.type === "int") {
+  if (column.type === "int" || column.type === "fk") {
     const parsed = Number(value);
     return Number.isNaN(parsed) ? "NULL" : String(parsed);
   }
@@ -73,14 +78,58 @@ function sqlValue(value: unknown, column: ColumnConfig): string {
   return `'${text}'`;
 }
 
-function buildInsertSql(table: TableKey, draft: Record<string, unknown>) {
-  const columns = TABLES[table].columns.filter(
-    (column) => column.editable && column.key !== "id",
+function buildFilterState(): Record<TableKey, Record<string, Set<string>>> {
+  return TABLE_KEYS.reduce((acc, table) => {
+    const tableFilters: Record<string, Set<string>> = {};
+    TABLES[table].filters.forEach((filter) => {
+      tableFilters[filter.field] = new Set<string>();
+    });
+    acc[table] = tableFilters;
+    return acc;
+  }, {} as Record<TableKey, Record<string, Set<string>>>);
+}
+
+function getStatusEnumKey(table: TableKey): string | undefined {
+  const statusField = TABLES[table].statusField;
+  const statusColumn = TABLES[table].columns.find(
+    (column) => column.key === statusField && column.type === "enum",
   );
+  return statusColumn?.enumKey;
+}
+
+function getFieldDisplayValue(
+  table: TableKey,
+  row: Record<string, unknown>,
+  field: string,
+  data: Record<TableKey, Record<string, unknown>[]>,
+) {
+  const column = TABLES[table].columns.find((item) => item.key === field);
+  if (!column) return String(row[field] ?? "");
+  if (column.type === "fk" && column.references) {
+    const refTable = column.references.table as TableKey;
+    const refRows = data[refTable] ?? [];
+    const match = refRows.find((refRow) => Number(refRow.id) === Number(row[field]));
+    const displayValue = match?.[column.references.displayField];
+    return String(displayValue ?? row[field] ?? "");
+  }
+  return String(row[field] ?? "");
+}
+
+function buildInsertSql(table: TableKey, draft: Record<string, unknown>) {
+  // Skip NULL values so Postgres applies column defaults (e.g. NOT NULL DEFAULT 'x').
+  const columns = TABLES[table].columns.filter(
+    (column) =>
+      column.editable &&
+      column.key !== "id" &&
+      draft[column.key] !== null &&
+      draft[column.key] !== undefined &&
+      draft[column.key] !== "",
+  );
+  if (columns.length === 0) {
+    return `insert into ${table} default values;`;
+  }
   const names = columns.map((column) => column.key).join(", ");
-  const values = columns
-    .map((column) => sqlValue(draft[column.key], column))
-    .join(", ");
+  const values = columns.map((column) => sqlValue(draft[column.key], column)).join(", ");
   return `insert into ${table} (${names}) values (${values});`;
 }
 
@@ -108,7 +157,7 @@ function KanbanColumn({
   table: TableKey;
   status: string;
   onAdd: () => void;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: `column:${table}:${status}`,
@@ -137,7 +186,7 @@ function KanbanCard({
   table: TableKey;
   id: number;
   onOpen: () => void;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `card:${table}:${id}`,
@@ -149,7 +198,7 @@ function KanbanCard({
       ? `translate3d(${transform.x}px, ${transform.y}px, 0)`
       : undefined,
     opacity: isDragging ? 0.55 : 1,
-  } as React.CSSProperties;
+  } as CSSProperties;
 
   return (
     <div
@@ -165,37 +214,82 @@ function KanbanCard({
   );
 }
 
+function SortableHeader({
+  column,
+  sortState,
+  onSort,
+}: {
+  column: ColumnConfig;
+  sortState: { key: string; dir: "asc" | "desc" } | null;
+  onSort: (key: string) => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: column.key });
+
+  const style = {
+    transform: transform
+      ? `translate3d(${transform.x}px, ${transform.y}px, 0)`
+      : undefined,
+    transition,
+    opacity: isDragging ? 0.65 : 1,
+  } as CSSProperties;
+
+  return (
+    <th ref={setNodeRef} style={style} onClick={() => onSort(column.key)}>
+      <span>{column.label}</span>
+      {sortState?.key === column.key && (
+        <span className="sort-indicator">{sortState.dir === "asc" ? "▲" : "▼"}</span>
+      )}
+      <button
+        type="button"
+        className="drag-handle"
+        ref={setActivatorNodeRef}
+        onClick={(event) => event.stopPropagation()}
+        {...attributes}
+        {...listeners}
+      >
+        ::
+      </button>
+    </th>
+  );
+}
+
 function App() {
   const [activeView, setActiveView] = useState<ViewKey>("spreadsheet");
   const [activeTable, setActiveTable] = useState<TableKey>("gig_platforms");
   const [dbOnline, setDbOnline] = useState(true);
-  const [data, setData] = useState<Record<TableKey, Record<string, unknown>[]>>({
-    gig_platforms: [],
-    job_applications: [],
-    contracting_platforms: [],
-  });
+  const [data, setData] = useState<Record<TableKey, Record<string, unknown>[]>>(() =>
+    TABLE_KEYS.reduce((acc, table) => {
+      acc[table] = [];
+      return acc;
+    }, {} as Record<TableKey, Record<string, unknown>[]>),
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sortState, setSortState] = useState<{ key: string; dir: "asc" | "desc" } | null>(
     null,
   );
-  const [columnOrder, setColumnOrder] = useState<Record<TableKey, string[]>>({
-    gig_platforms: loadColumnOrder("gig_platforms"),
-    job_applications: loadColumnOrder("job_applications"),
-    contracting_platforms: loadColumnOrder("contracting_platforms"),
-  });
-  const [filters, setFilters] = useState<
-    Record<TableKey, Record<string, Set<string>>>
-  >({
-    gig_platforms: { status: new Set<string>() },
-    job_applications: {
-      stage: new Set<string>(),
-      engagement_type: new Set<string>(),
-      outcome: new Set<string>(),
-    },
-    contracting_platforms: { status: new Set<string>() },
-  });
+  const [columnOrder, setColumnOrder] = useState<Record<TableKey, string[]>>(() =>
+    TABLE_KEYS.reduce((acc, table) => {
+      acc[table] = loadColumnOrder(table);
+      return acc;
+    }, {} as Record<TableKey, string[]>),
+  );
+  const [filters, setFilters] = useState<Record<TableKey, Record<string, Set<string>>>>(
+    () => buildFilterState(),
+  );
   const [editing, setEditing] = useState<EditState | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const headerSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  );
 
   async function loadTable(table: TableKey) {
     const rows = (await dbQuery<Record<string, unknown>[]>(
@@ -213,7 +307,8 @@ function App() {
       setDbOnline(true);
     } catch (err) {
       setDbOnline(false);
-      setError(err instanceof Error ? err.message : "Failed to load data");
+      console.error(err);
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
@@ -231,6 +326,8 @@ function App() {
   const orderedColumns = columnOrder[activeTable]
     .map((key) => activeConfig.columns.find((column) => column.key === key))
     .filter(Boolean) as ColumnConfig[];
+  const statusEnumKey = getStatusEnumKey(activeTable);
+  const statusOptions = statusEnumKey ? ENUMS[statusEnumKey] ?? [] : [];
 
   const filteredRows = useMemo(() => {
     let rows = [...data[activeTable]];
@@ -265,16 +362,18 @@ function App() {
     });
   }
 
-  function handleHeaderDrop(fromKey: string, toKey: string) {
-    if (fromKey === toKey) return;
+  function handleHeaderDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
     setColumnOrder((prev) => {
-      const next = [...prev[activeTable]];
-      const fromIndex = next.indexOf(fromKey);
-      const toIndex = next.indexOf(toKey);
+      const current = prev[activeTable];
+      const fromIndex = current.indexOf(String(active.id));
+      const toIndex = current.indexOf(String(over.id));
       if (fromIndex === -1 || toIndex === -1) return prev;
-      next.splice(fromIndex, 1);
-      next.splice(toIndex, 0, fromKey);
-      return { ...prev, [activeTable]: next };
+      return {
+        ...prev,
+        [activeTable]: arrayMove(current, fromIndex, toIndex),
+      };
     });
   }
 
@@ -306,7 +405,7 @@ function App() {
 
   async function saveRow(edit: EditState) {
     setLoading(true);
-    setError(null);
+    setSaveError(null);
     try {
       if (edit.isNew) {
         await dbExecute(buildInsertSql(edit.table, edit.row));
@@ -315,10 +414,10 @@ function App() {
       }
       await loadTable(edit.table);
       setEditing(null);
-      setDbOnline(true);
     } catch (err) {
-      setDbOnline(false);
-      setError(err instanceof Error ? err.message : "Failed to save row");
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("saveRow:", msg);
+      setSaveError(msg);
     } finally {
       setLoading(false);
     }
@@ -332,10 +431,9 @@ function App() {
         `update ${table} set ${statusField} = '${statusValue.replace(/'/g, "''")}' where id = ${id};`,
       );
       await loadTable(table);
-      setDbOnline(true);
     } catch (err) {
-      setDbOnline(false);
-      setError(err instanceof Error ? err.message : "Failed to update status");
+      console.error(err);
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
@@ -416,7 +514,7 @@ function App() {
                 <div key={filter.field} className="filter-group">
                   <span className="filter-label">{filter.field}</span>
                   <div className="chip-row">
-                    {ENUMS[filter.enumKey].map((value) => (
+                      {(ENUMS[filter.enumKey] ?? []).map((value) => (
                       <button
                         key={value}
                         className={
@@ -435,53 +533,42 @@ function App() {
             </div>
 
             <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    {orderedColumns.map((column) => (
-                      <th
-                        key={column.key}
-                        draggable
-                        onDragStart={(event) =>
-                          event.dataTransfer.setData("text/plain", column.key)
-                        }
-                        onDragOver={(event) => event.preventDefault()}
-                        onDrop={(event) => {
-                          event.preventDefault();
-                          const fromKey = event.dataTransfer.getData("text/plain");
-                          handleHeaderDrop(fromKey, column.key);
-                        }}
-                        onClick={() => toggleSort(column.key)}
-                      >
-                        <span>{column.label}</span>
-                        {sortState?.key === column.key && (
-                          <span className="sort-indicator">
-                            {sortState.dir === "asc" ? "▲" : "▼"}
-                          </span>
-                        )}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredRows.map((row) => (
-                    <tr
-                      key={String(row.id)}
-                      onClick={() =>
-                        setEditing({
-                          table: activeTable,
-                          row: row as Record<string, unknown>,
-                          isNew: false,
-                        })
-                      }
-                    >
-                      {orderedColumns.map((column) => (
-                        <td key={column.key}>{String(row[column.key] ?? "")}</td>
+              <DndContext sensors={headerSensors} onDragEnd={handleHeaderDragEnd}>
+                <SortableContext items={orderedColumns.map((column) => column.key)}>
+                  <table>
+                    <thead>
+                      <tr>
+                        {orderedColumns.map((column) => (
+                          <SortableHeader
+                            key={column.key}
+                            column={column}
+                            sortState={sortState}
+                            onSort={toggleSort}
+                          />
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredRows.map((row) => (
+                        <tr
+                          key={String(row.id)}
+                          onClick={() =>
+                            setEditing({
+                              table: activeTable,
+                              row: row as Record<string, unknown>,
+                              isNew: false,
+                            })
+                          }
+                        >
+                          {orderedColumns.map((column) => (
+                            <td key={column.key}>{String(row[column.key] ?? "")}</td>
+                          ))}
+                        </tr>
                       ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                    </tbody>
+                  </table>
+                </SortableContext>
+              </DndContext>
             </div>
           </div>
         )}
@@ -489,7 +576,7 @@ function App() {
         {activeView === "kanban" && (
           <DndContext onDragEnd={handleKanbanDragEnd}>
             <div className="kanban">
-              {ENUMS[activeConfig.filters[0].enumKey].map((status) => (
+              {statusOptions.map((status) => (
                 <KanbanColumn
                   key={status}
                   table={activeTable}
@@ -513,30 +600,14 @@ function App() {
                           })
                         }
                       >
-                        {activeTable === "gig_platforms" && (
-                          <>
-                            <div className="card-title">{String(row.name ?? "")}</div>
-                            <div className="card-meta">{String(row.next_action ?? "")}</div>
-                            <div className="card-meta">{String(row.next_action_at ?? "")}</div>
-                          </>
-                        )}
-                        {activeTable === "job_applications" && (
-                          <>
-                            <div className="card-title">{String(row.role_title ?? "")}</div>
-                            <div className="card-meta">{String(row.company ?? "")}</div>
-                            <div className="card-meta">{String(row.rate_or_salary ?? "")}</div>
-                            <div className="card-meta">{String(row.outcome ?? "")}</div>
-                            <div className="card-meta">{String(row.next_action_at ?? "")}</div>
-                          </>
-                        )}
-                        {activeTable === "contracting_platforms" && (
-                          <>
-                            <div className="card-title">{String(row.name ?? "")}</div>
-                            <div className="card-meta">{String(row.current_rate ?? "")}</div>
-                            <div className="card-meta">{String(row.connects_balance ?? "")}</div>
-                            <div className="card-meta">{String(row.next_action ?? "")}</div>
-                          </>
-                        )}
+                        {activeConfig.cardFields.map((field, index) => (
+                          <div
+                            key={field}
+                            className={index === 0 ? "card-title" : "card-meta"}
+                          >
+                            {getFieldDisplayValue(activeTable, row, field, data)}
+                          </div>
+                        ))}
                       </KanbanCard>
                     ))}
                 </KanbanColumn>
@@ -549,8 +620,10 @@ function App() {
       {editing && (
         <EditModal
           editState={editing}
-          onClose={() => setEditing(null)}
+          onClose={() => { setEditing(null); setSaveError(null); }}
           onSave={saveRow}
+          tableData={data}
+          saveError={saveError}
         />
       )}
     </div>
@@ -561,16 +634,42 @@ function EditModal({
   editState,
   onClose,
   onSave,
+  tableData,
+  saveError,
 }: {
   editState: EditState;
   onClose: () => void;
   onSave: (edit: EditState) => void;
+  tableData: Record<TableKey, Record<string, unknown>[]>;
+  saveError: string | null;
 }) {
   const { table, row, isNew } = editState;
   const [draft, setDraft] = useState<Record<string, unknown>>({ ...row });
+  const [attemptedSave, setAttemptedSave] = useState(false);
+  const missingRequired = TABLES[table].columns.filter(
+    (column) =>
+      column.required && (draft[column.key] === null || draft[column.key] === undefined || draft[column.key] === ""),
+  );
+  const showRequiredMessage = attemptedSave && missingRequired.length > 0;
 
   function updateField(key: string, value: string) {
     setDraft((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function handleSaveClick() {
+    setAttemptedSave(true);
+    if (missingRequired.length > 0) return;
+    onSave({ table, row: draft, isNew });
+  }
+
+  function getReferenceHint(tableKey: TableKey) {
+    if (tableKey === "sources") {
+      return "Add a source first in the Sources tab.";
+    }
+    const tableLabel = TABLES[tableKey]?.label ?? tableKey;
+    const singular = tableLabel.endsWith("s") ? tableLabel.slice(0, -1) : tableLabel;
+    const article = /^[aeiou]/i.test(singular) ? "an" : "a";
+    return `Add ${article} ${singular.toLowerCase()} first in the ${tableLabel} tab.`;
   }
 
   return (
@@ -591,7 +690,10 @@ function EditModal({
             const disabled = !column.editable;
             return (
               <label key={column.key} className={disabled ? "field disabled" : "field"}>
-                <span>{column.label}</span>
+                <span>
+                  {column.label}
+                  {column.required && <span className="required"> *</span>}
+                </span>
                 {column.type === "enum" && column.enumKey ? (
                   <select
                     value={String(value ?? "")}
@@ -599,12 +701,32 @@ function EditModal({
                     disabled={disabled}
                   >
                     <option value="">Select</option>
-                    {ENUMS[column.enumKey].map((option) => (
+                    {(ENUMS[column.enumKey] ?? []).map((option) => (
                       <option key={option} value={option}>
                         {option}
                       </option>
                     ))}
                   </select>
+                ) : column.type === "fk" && column.references ? (
+                  <>
+                    <select
+                      value={String(value ?? "")}
+                      onChange={(event) => updateField(column.key, event.target.value)}
+                      disabled={disabled}
+                    >
+                      <option value="">Select</option>
+                      {(tableData[column.references.table as TableKey] ?? []).map((row) => (
+                        <option key={String(row.id)} value={String(row.id)}>
+                          {String(row[column.references.displayField] ?? row.id)}
+                        </option>
+                      ))}
+                    </select>
+                    {(tableData[column.references.table as TableKey] ?? []).length === 0 && (
+                      <span className="field-hint">
+                        {getReferenceHint(column.references.table as TableKey)}
+                      </span>
+                    )}
+                  </>
                 ) : column.type === "date" ? (
                   <input
                     type="date"
@@ -635,8 +757,14 @@ function EditModal({
           <button className="ghost" onClick={onClose}>
             Cancel
           </button>
-          <button onClick={() => onSave({ table, row: draft, isNew })}>Save</button>
+          <button onClick={handleSaveClick}>Save</button>
         </div>
+        {showRequiredMessage && (
+          <div className="field-warning">Fill all required fields before saving.</div>
+        )}
+        {saveError && (
+          <div className="field-warning">{saveError}</div>
+        )}
       </div>
     </div>
   );
