@@ -1,0 +1,107 @@
+{
+  "includeTables": [
+    "gig_platforms",
+    "sources",
+    "applications",
+    "materials",
+    "proposals_contracts"
+  ],
+
+  "tables": {
+    "gig_platforms": {
+      "label": "Gig Platforms",
+      "statusField": "status",
+      "kanbanEnum": "gig_platform_status",
+      "cardFields": ["name", "next_action", "next_action_at"],
+      "filters": [
+        { "field": "status", "enumKey": "gig_platform_status" }
+      ]
+    },
+    "sources": {
+      "label": "Sources",
+      "statusField": "status",
+      "kanbanEnum": "source_status",
+      "cardFields": ["name", "type", "current_rate", "next_action"],
+      "filters": [
+        { "field": "type",   "enumKey": "source_type" },
+        { "field": "status", "enumKey": "source_status" }
+      ]
+    },
+    "applications": {
+      "label": "Applications",
+      "statusField": "stage",
+      "kanbanEnum": "job_stage",
+      "cardFields": ["role_title", "company", "rate_or_salary", "outcome", "next_action_at"],
+      "filters": [
+        { "field": "stage",   "enumKey": "job_stage" },
+        { "field": "type",    "enumKey": "application_type" },
+        { "field": "outcome", "enumKey": "proposal_outcome" }
+      ]
+    },
+    "materials": {
+      "label": "Materials",
+      "statusField": "status",
+      "kanbanEnum": "material_status",
+      "cardFields": ["name", "type", "version_label", "status"],
+      "filters": [
+        { "field": "type",   "enumKey": "material_type" },
+        { "field": "status", "enumKey": "material_status" }
+      ]
+    },
+    "proposals_contracts": {
+      "label": "Contracts",
+      "statusField": "status",
+      "kanbanEnum": "contract_status",
+      "cardFields": ["application_id", "status", "rate", "start_date"],
+      "filters": [
+        { "field": "status", "enumKey": "contract_status" }
+      ]
+    }
+  },
+
+  "columnLabels": {
+    "id":                    "ID",
+    "role_title":            "Role Title",
+    "rate_or_salary":        "Rate / Salary",
+    "source_id":             "Source",
+    "application_id":        "Application",
+    "job_posting_url":       "Posting URL",
+    "submitted_at":          "Submitted",
+    "applied_at":            "Applied",
+    "next_action":           "Next Action",
+    "next_action_at":        "Next Action Date",
+    "created_at":            "Created",
+    "updated_at":            "Updated",
+    "profile_url":           "Profile URL",
+    "current_rate":          "Current Rate",
+    "connects_balance":      "Connects Balance",
+    "connects_per_proposal": "Connects / Proposal",
+    "submission_notes":      "Submission Notes",
+    "profile_files_path":    "Profile Files",
+    "local_files_path":      "Local Files",
+    "version_label":         "Version Label",
+    "file_path":             "File Path",
+    "start_date":            "Start Date",
+    "end_date":              "End Date"
+  },
+
+  "columnOverrides": {
+    "*.id":                       { "editable": false },
+    "*.created_at":               { "editable": false },
+    "*.updated_at":               { "editable": false },
+    "*.url":                      { "type": "url" },
+    "*.profile_url":              { "type": "url" },
+    "*.job_posting_url":          { "type": "url" },
+    "*.file_path":                { "type": "path" },
+    "*.profile_files_path":       { "type": "path" },
+    "*.local_files_path":         { "type": "path" },
+    "applications.source_id":     {
+      "type": "fk",
+      "references": { "table": "sources", "displayField": "name" }
+    },
+    "proposals_contracts.application_id": {
+      "type": "fk",
+      "references": { "table": "applications", "displayField": "role_title" }
+    }
+  }
+}
