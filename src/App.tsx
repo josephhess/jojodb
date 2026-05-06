@@ -13,7 +13,7 @@ import { dbExecute, dbQuery } from "./lib/db";
 import { ENUMS, TABLES, type ColumnConfig, type TableKey } from "./lib/schema";
 import "./App.css";
 
-type ViewKey = "spreadsheet" | "kanban";
+type ViewKey = "spreadsheet" | "kanban" | "calendar";
 
 type EditState = {
   table: TableKey;
@@ -287,6 +287,13 @@ function App() {
   );
   const [editing, setEditing] = useState<EditState | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [expandedRows, setExpandedRows] = useState<Record<TableKey, Set<number>>>(
+    () =>
+      TABLE_KEYS.reduce((acc, table) => {
+        acc[table] = new Set<number>();
+        return acc;
+      }, {} as Record<TableKey, Set<number>>),
+  );
   const headerSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
@@ -391,6 +398,19 @@ function App() {
     });
   }
 
+  function toggleRowExpanded(table: TableKey, rowId: number) {
+    setExpandedRows((prev) => {
+      const next = new Set(prev[table]);
+      if (next.has(rowId)) next.delete(rowId);
+      else next.add(rowId);
+      return { ...prev, [table]: next };
+    });
+  }
+
+  function collapseAllRows(table: TableKey) {
+    setExpandedRows((prev) => ({ ...prev, [table]: new Set<number>() }));
+  }
+
   function startNewRow(table: TableKey, preset?: Record<string, unknown>) {
     const emptyRow: Record<string, unknown> = { id: null };
     TABLES[table].columns.forEach((column) => {
@@ -469,6 +489,12 @@ function App() {
           >
             Kanban
           </button>
+          <button
+            className={activeView === "calendar" ? "active" : ""}
+            onClick={() => setActiveView("calendar")}
+          >
+            Calendar
+          </button>
         </div>
       </header>
 
@@ -485,22 +511,26 @@ function App() {
 
       <section className="panel">
         <div className="panel-header">
-          <div className="table-toggle">
-            {TABLE_KEYS.map((table) => (
-              <button
-                key={table}
-                className={activeTable === table ? "active" : ""}
-                onClick={() => {
-                  setActiveTable(table);
-                  setSortState(null);
-                }}
-              >
-                {TABLES[table].label}
-              </button>
-            ))}
-          </div>
+          {activeView !== "calendar" && (
+            <div className="table-toggle">
+              {TABLE_KEYS.map((table) => (
+                <button
+                  key={table}
+                  className={activeTable === table ? "active" : ""}
+                  onClick={() => {
+                    setActiveTable(table);
+                    setSortState(null);
+                  }}
+                >
+                  {TABLES[table].label}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="panel-actions">
-            <button onClick={() => startNewRow(activeTable)}>New Row</button>
+            {activeView !== "calendar" && (
+              <button onClick={() => startNewRow(activeTable)}>New Row</button>
+            )}
             <button className="ghost" onClick={refreshAll} disabled={loading}>
               Refresh
             </button>
@@ -538,6 +568,17 @@ function App() {
                   <table>
                     <thead>
                       <tr>
+                        <th className="expander-col">
+                          {expandedRows[activeTable]?.size ? (
+                            <button
+                              type="button"
+                              className="collapse-all"
+                              onClick={() => collapseAllRows(activeTable)}
+                            >
+                              Collapse
+                            </button>
+                          ) : null}
+                        </th>
                         {orderedColumns.map((column) => (
                           <SortableHeader
                             key={column.key}
@@ -549,22 +590,45 @@ function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredRows.map((row) => (
-                        <tr
-                          key={String(row.id)}
-                          onClick={() =>
-                            setEditing({
-                              table: activeTable,
-                              row: row as Record<string, unknown>,
-                              isNew: false,
-                            })
-                          }
-                        >
-                          {orderedColumns.map((column) => (
-                            <td key={column.key}>{String(row[column.key] ?? "")}</td>
-                          ))}
-                        </tr>
-                      ))}
+                      {filteredRows.map((row) => {
+                        const rowId = Number(row.id);
+                        const isExpanded = expandedRows[activeTable]?.has(rowId);
+                        return (
+                          <tr
+                            key={String(row.id)}
+                            className={isExpanded ? "row-expanded" : undefined}
+                            onClick={() =>
+                              setEditing({
+                                table: activeTable,
+                                row: row as Record<string, unknown>,
+                                isNew: false,
+                              })
+                            }
+                          >
+                            <td className="expander-col">
+                              {Number.isFinite(rowId) ? (
+                                <button
+                                  type="button"
+                                  className="row-expander"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    toggleRowExpanded(activeTable, rowId);
+                                  }}
+                                >
+                                  {isExpanded ? "v" : ">"}
+                                </button>
+                              ) : null}
+                            </td>
+                            {orderedColumns.map((column) => (
+                              <td key={column.key}>
+                                <div className="cell-text">
+                                  {String(row[column.key] ?? "")}
+                                </div>
+                              </td>
+                            ))}
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </SortableContext>
@@ -615,6 +679,15 @@ function App() {
             </div>
           </DndContext>
         )}
+
+        {activeView === "calendar" && (
+          <CalendarView
+            data={data}
+            onOpenEdit={(table, row) =>
+              setEditing({ table, row, isNew: false })
+            }
+          />
+        )}
       </section>
 
       {editing && (
@@ -626,6 +699,217 @@ function App() {
           saveError={saveError}
         />
       )}
+    </div>
+  );
+}
+
+const CALENDAR_TRACKS: Array<{ key: TableKey; color: string }> = [
+  { key: "gig_platforms", color: "#e8820c" },
+  { key: "sources", color: "#2962c4" },
+  { key: "applications", color: "#1a9b6b" },
+];
+const CONTRACT_COLOR = "#7c3aed";
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function CalendarView({
+  data,
+  onOpenEdit,
+}: {
+  data: Record<TableKey, Record<string, unknown>[]>;
+  onOpenEdit: (table: TableKey, row: Record<string, unknown>) => void;
+}) {
+  const today = new Date();
+  const [year, setYear] = useState(today.getFullYear());
+  const [month, setMonth] = useState(today.getMonth());
+  const applicationsById = useMemo(() => {
+    const map = new Map<number, Record<string, unknown>>();
+    (data.applications ?? []).forEach((row) => {
+      const id = Number(row.id);
+      if (Number.isFinite(id)) map.set(id, row);
+    });
+    return map;
+  }, [data]);
+
+  function prevMonth() {
+    if (month === 0) { setYear((y) => y - 1); setMonth(11); }
+    else setMonth((m) => m - 1);
+  }
+  function nextMonth() {
+    if (month === 11) { setYear((y) => y + 1); setMonth(0); }
+    else setMonth((m) => m + 1);
+  }
+
+  const eventsByDate = useMemo(() => {
+    const map: Record<
+      string,
+      Array<{ table: TableKey; row: Record<string, unknown>; color: string; span?: string }>
+    > = {};
+    CALENDAR_TRACKS.forEach(({ key, color }) => {
+      (data[key] ?? []).forEach((row) => {
+        const raw = String(row.next_action_at ?? "").slice(0, 10);
+        if (!raw || raw === "null" || raw.length < 10) return;
+        if (!map[raw]) map[raw] = [];
+        map[raw].push({ table: key, row, color, span: "span-only" });
+      });
+    });
+    return map;
+  }, [data]);
+
+  const firstDow = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < firstDow; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  const todayStr = [
+    today.getFullYear(),
+    String(today.getMonth() + 1).padStart(2, "0"),
+    String(today.getDate()).padStart(2, "0"),
+  ].join("-");
+
+  const monthStart = `${year}-${String(month + 1).padStart(2, "0")}-01`;
+  const monthEnd = `${year}-${String(month + 1).padStart(2, "0")}-${String(daysInMonth).padStart(2, "0")}`;
+
+  function toDate(value: string) {
+    return new Date(`${value}T00:00:00`);
+  }
+
+  function addDays(value: string, offset: number) {
+    const date = toDate(value);
+    date.setDate(date.getDate() + offset);
+    return [
+      date.getFullYear(),
+      String(date.getMonth() + 1).padStart(2, "0"),
+      String(date.getDate()).padStart(2, "0"),
+    ].join("-");
+  }
+
+  function isBetween(target: string, start: string, end: string) {
+    return toDate(target) >= toDate(start) && toDate(target) <= toDate(end);
+  }
+
+  const contractEvents = useMemo(() => {
+    const map: Record<
+      string,
+      Array<{ table: TableKey; row: Record<string, unknown>; color: string; span: string }>
+    > = {};
+    (data.proposals_contracts ?? []).forEach((row) => {
+      const rawStart = String(row.start_date ?? "").slice(0, 10);
+      if (!rawStart || rawStart === "null" || rawStart.length < 10) return;
+      const rawEnd = String(row.end_date ?? "").slice(0, 10);
+      const hasEnd = rawEnd && rawEnd !== "null" && rawEnd.length >= 10;
+      const effectiveEnd = hasEnd ? rawEnd : monthEnd;
+
+      if (toDate(rawStart) > toDate(monthEnd)) return;
+      if (toDate(effectiveEnd) < toDate(monthStart)) return;
+
+      const rangeStart = toDate(rawStart) < toDate(monthStart) ? monthStart : rawStart;
+      const rangeEnd = toDate(effectiveEnd) > toDate(monthEnd) ? monthEnd : effectiveEnd;
+
+      for (
+        let cursor = rangeStart;
+        toDate(cursor) <= toDate(rangeEnd);
+        cursor = addDays(cursor, 1)
+      ) {
+        const prev = addDays(cursor, -1);
+        const next = addDays(cursor, 1);
+        const prevActive = isBetween(prev, rawStart, effectiveEnd) && isBetween(prev, monthStart, monthEnd);
+        const nextActive = isBetween(next, rawStart, effectiveEnd) && isBetween(next, monthStart, monthEnd);
+        let span = "span-middle";
+        if (!prevActive && !nextActive) span = "span-only";
+        else if (!prevActive && nextActive) span = "span-start";
+        else if (prevActive && !nextActive) span = "span-end";
+
+        if (!map[cursor]) map[cursor] = [];
+        map[cursor].push({
+          table: "proposals_contracts",
+          row,
+          color: CONTRACT_COLOR,
+          span,
+        });
+      }
+    });
+    return map;
+  }, [data, monthEnd, monthStart]);
+
+  return (
+    <div className="calendar-view">
+      <div className="calendar-nav">
+        <button className="ghost" onClick={prevMonth}>◀</button>
+        <h3 className="calendar-title">{MONTH_NAMES[month]} {year}</h3>
+        <button className="ghost" onClick={nextMonth}>▶</button>
+        <div className="calendar-legend">
+          {CALENDAR_TRACKS.map(({ key, color }) => (
+            <span key={key} className="cal-legend-item">
+              <span className="cal-dot" style={{ background: color }} />
+              {TABLES[key].label}
+            </span>
+          ))}
+          <span className="cal-legend-item">
+            <span className="cal-dot" style={{ background: CONTRACT_COLOR }} />
+            Contracts
+          </span>
+        </div>
+      </div>
+      <div className="calendar-grid">
+        {DAY_NAMES.map((d) => (
+          <div key={d} className="cal-dow">{d}</div>
+        ))}
+        {cells.map((day, i) => {
+          if (day === null) return <div key={`pad-${i}`} className="cal-cell empty" />;
+          const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+          const events = [
+            ...(eventsByDate[dateStr] ?? []),
+            ...(contractEvents[dateStr] ?? []),
+          ];
+          const orderMap: Partial<Record<TableKey, number>> = {
+            sources: 0,
+            gig_platforms: 1,
+            applications: 2,
+            proposals_contracts: 3,
+          };
+          const sortedEvents = [...events].sort((a, b) => {
+            const left = orderMap[a.table] ?? 0;
+            const right = orderMap[b.table] ?? 0;
+            return left - right;
+          });
+          return (
+            <div key={dateStr} className={`cal-cell${dateStr === todayStr ? " today" : ""}`}>
+              <span className="cal-day-num">{day}</span>
+              <div className="cal-events">
+                {sortedEvents.map(({ table, row, color, span }, ei) => {
+                  const label =
+                    table === "applications"
+                      ? String(row.role_title ?? row.company ?? "")
+                      : table === "proposals_contracts"
+                        ? String(
+                            applicationsById.get(Number(row.application_id))?.role_title ??
+                              applicationsById.get(Number(row.application_id))?.company ??
+                              "Contract",
+                          )
+                        : String(row.name ?? "");
+                  return (
+                    <button
+                      key={`${table}-${String(row.id)}-${ei}`}
+                      className={`cal-event ${span ?? "span-only"}`}
+                      style={{ background: color }}
+                      onClick={() => onOpenEdit(table, row)}
+                      title={`${TABLES[table].label}: ${label}`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
