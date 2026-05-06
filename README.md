@@ -6,7 +6,7 @@ A local-first desktop app for managing a three-track job search: gig platforms, 
 
 ## Why This Exists
 
-Job search tracking tools are either too simple (spreadsheets with no structure) or too complex (cloud-synced SaaS with subscription gates). This app sits in the middle: a proper relational schema with enum-driven status fields, inline editing, and multiple views — all running entirely on your own machine.
+Partially for clear tracking with a single source of truth for certain elements and keeping things visible. Partially just because it is fun. I could have just used Airtable and Obsidian or any number of tools and combinations but sometimes it's nice to have something do exactly what you want without the additional weight that comes with platforms. I also wanted to reduce api calls to an external source when it could be cheaper and faster locally.
 
 ---
 
