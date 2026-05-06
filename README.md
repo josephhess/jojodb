@@ -6,7 +6,23 @@ A local-first desktop app for managing a three-track job search: gig platforms, 
 
 ## Why This Exists
 
-Job search tracking tools are either too simple (spreadsheets with no structure) or too complex (cloud-synced SaaS with subscription gates). This app sits in the middle: a proper relational schema with enum-driven status fields, inline editing, and a kanban view — all running entirely on your own machine.
+Job search tracking tools are either too simple (spreadsheets with no structure) or too complex (cloud-synced SaaS with subscription gates). This app sits in the middle: a proper relational schema with enum-driven status fields, inline editing, and multiple views — all running entirely on your own machine.
+
+---
+
+## Screenshots
+
+**Spreadsheet view** — sortable columns, inline editing, binary enum filters, persistent column reorder
+
+![Spreadsheet view](docs/screenshots/spreadsheet-view.png)
+
+**Kanban view** — drag cards between status columns, add and edit from the board
+
+![Kanban view](docs/screenshots/kanban-view.png)
+
+**Calendar view** — next actions across all tracks, color-coded by table
+
+![Calendar view](docs/screenshots/calendar-view.png)
 
 ---
 
@@ -27,21 +43,10 @@ Job search tracking tools are either too simple (spreadsheets with no structure)
 
 - **Spreadsheet view** — sortable columns, binary enum filters, inline row editing, column reorder (persisted locally)
 - **Kanban view** — drag cards between status columns, add/edit from the board
+- **Calendar view** — next actions across all tracks, color-coded by source table
 - **Three tracks** in one app: gig platforms, job applications, contracting platforms
 - **Offline-safe** — clear "Database offline" banner if Postgres isn't running; no crashes
 - **No ORM** — raw SQL queries via a Tauri command proxy; schema stays transparent
-
----
-
-## Data Model
-
-Three tables backed by Postgres ENUMs for status columns (kanban-ready by design):
-
-- `gig_platforms` — annotation/microtask platforms with lifecycle status
-- `job_applications` — job pipeline with stage tracking, engagement type (proposal/application/direct outreach), and FK to contracting platform
-- `contracting_platforms` — freelance platform profiles with connect balance and submission guidance
-
-Schema migrations are managed by a separate Rails-style migration runner. See your local database setup for details.
 
 ---
 
@@ -103,4 +108,4 @@ The Rust layer is intentionally thin — it opens a Postgres connection, runs th
 
 ## Status
 
-Active development. Core views functional. Sorting UI, calendar view, and test coverage are in progress.
+Active development. Spreadsheet, kanban, and calendar views are functional. Test coverage is in progress.
