@@ -263,7 +263,7 @@ function SortableHeader({
 
 function App() {
   const [activeView, setActiveView] = useState<ViewKey>("spreadsheet");
-  const [activeTable, setActiveTable] = useState<TableKey>("gig_platforms");
+  const [activeTable, setActiveTable] = useState<TableKey>("sources");
   const [dbOnline, setDbOnline] = useState(true);
   const [data, setData] = useState<Record<TableKey, Record<string, unknown>[]>>(() =>
     TABLE_KEYS.reduce((acc, table) => {
@@ -704,7 +704,6 @@ function App() {
 }
 
 const CALENDAR_TRACKS: Array<{ key: TableKey; color: string }> = [
-  { key: "gig_platforms", color: "#e8820c" },
   { key: "sources", color: "#2962c4" },
   { key: "applications", color: "#1a9b6b" },
 ];
@@ -869,8 +868,7 @@ function CalendarView({
           ];
           const orderMap: Partial<Record<TableKey, number>> = {
             sources: 0,
-            gig_platforms: 1,
-            applications: 2,
+            applications: 1,
             proposals_contracts: 3,
           };
           const sortedEvents = [...events].sort((a, b) => {

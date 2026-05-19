@@ -1,6 +1,5 @@
 {
   "includeTables": [
-    "gig_platforms",
     "sources",
     "applications",
     "materials",
@@ -8,15 +7,6 @@
   ],
 
   "tables": {
-    "gig_platforms": {
-      "label": "Gig Platforms",
-      "statusField": "status",
-      "kanbanEnum": "gig_platform_status",
-      "cardFields": ["name", "next_action", "next_action_at"],
-      "filters": [
-        { "field": "status", "enumKey": "gig_platform_status" }
-      ]
-    },
     "sources": {
       "label": "Sources",
       "statusField": "status",
@@ -74,11 +64,6 @@
     "updated_at":            "Updated",
     "profile_url":           "Profile URL",
     "current_rate":          "Current Rate",
-    "connects_balance":      "Connects Balance",
-    "connects_per_proposal": "Connects / Proposal",
-    "submission_notes":      "Submission Notes",
-    "profile_files_path":    "Profile Files",
-    "local_files_path":      "Local Files",
     "version_label":         "Version Label",
     "file_path":             "File Path",
     "start_date":            "Start Date",
@@ -93,8 +78,6 @@
     "*.profile_url":              { "type": "url" },
     "*.job_posting_url":          { "type": "url" },
     "*.file_path":                { "type": "path" },
-    "*.profile_files_path":       { "type": "path" },
-    "*.local_files_path":         { "type": "path" },
     "applications.source_id":     {
       "type": "fk",
       "references": { "table": "sources", "displayField": "name" }
@@ -102,6 +85,10 @@
     "proposals_contracts.application_id": {
       "type": "fk",
       "references": { "table": "applications", "displayField": "role_title" }
+    },
+    "materials.source_id": {
+      "type": "fk",
+      "references": { "table": "sources", "displayField": "name" }
     }
   }
 }
